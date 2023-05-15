@@ -1,5 +1,6 @@
 const express = require('express');
 const cors = require('cors');
+const jwt = require('jsonwebtoken')
 const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
 require('dotenv').config()
 
@@ -14,7 +15,9 @@ app.use(express.json())
 
 
 
-const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster0.1avndyn.mongodb.net/?retryWrites=true&w=majority`;
+// const uri = `mongodb+srv://:@cluster0.1avndyn.mongodb.net/?retryWrites=true&w=majority`;
+const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster1.yhec9tq.mongodb.net/?retryWrites=true&w=majority`;
+
 
 // Create a MongoClient with a MongoClientOptions object to set the Stable API version
 const client = new MongoClient(uri, {
@@ -25,6 +28,32 @@ const client = new MongoClient(uri, {
   }
 });
 
+
+// check authorization
+const verifyJWT = (req, res, next) =>{
+  // console.log('from verifyJWT: ', req.headers.authorization);
+  const authorization = req.headers.authorization;
+  
+  // now check authorization code is available or not
+  if(!authorization){
+    return res.status(401).send({error: true, message: 'unauthorized access'});
+  }
+
+  const token = authorization.split(' ')[1];
+
+  jwt.verify(token, process.env.ACCESS_TOKEN_SECRET, (error, decoded) => {
+    if(error){
+      return res.status(403).send({error: true, message: 'Unauthorized Access'})
+    }
+
+    req.decoded = decoded;
+    next();
+
+  })
+
+}
+
+
 async function run() {
   try {
     // Connect the client to the server	(optional starting in v4.7)
@@ -34,30 +63,40 @@ async function run() {
     const bookingCollection = client.db('carDoctor').collection('bookings');
 
 
-    app.get('/services', async(req, res) => {
+    //jwt
+    app.post('/jwt', (req, res) => {
+      const user = req.body;
+      console.log(user);
+      const token = jwt.sign(user, process.env.ACCESS_TOKEN_SECRET, { expiresIn: '1h' });
+      console.log(token);
+      res.send({token})
+    })
+
+
+    // service routes
+    app.get('/services', async (req, res) => {
       const cursor = serviceCollection.find();
       const result = await cursor.toArray();
       res.send(result)
     })
 
-    app.get('/checkout/:id', async(req, res) => {
+    app.get('/checkout/:id', async (req, res) => {
       const id = req.params.id;
-      const query = { _id: new ObjectId(id)};
+      const query = { _id: new ObjectId(id) };
       const options = {
-        projection: {title: 1, price: 1, img: 1, description: 1}
+        projection: { title: 1, price: 1, img: 1, description: 1 }
       }
       const result = await serviceCollection.findOne(query, options)
       res.send(result)
 
     })
 
-    app.get('/bookings', async(req, res) => {
-      
-      console.log(req.query);
+    app.get('/bookings', verifyJWT , async (req, res) => {
+
+      console.log(req.headers.authorization);
       let query = {}
-      if(req.query?.email)
-      {
-        query = {email: req.query.email}
+      if (req.query?.email) {
+        query = { email: req.query.email }
       }
 
       const result = await bookingCollection.find(query).toArray();
@@ -65,16 +104,32 @@ async function run() {
     })
 
     //delete
-    app.delete('/bookings/:id', async(req, res) => {
+    app.delete('/bookings/:id', async (req, res) => {
       const id = req.params.id;
-      const query = {_id: new ObjectId(id)}
+      const query = { _id: new ObjectId(id) }
       const result = await bookingCollection.deleteOne(query);
+      res.send(result)
+    })
+
+    // update
+    app.patch('/bookings/:id', async (req, res) => {
+      const id = req.params.id;
+      const updatedBooking = req.body;
+      console.log(updatedBooking);
+      const filter = { _id: new ObjectId(id) }
+      const updateDoc = {
+        $set: {
+          status: updatedBooking.status
+        }
+      }
+
+      const result = await bookingCollection.updateOne(filter, updateDoc)
       res.send(result)
     })
 
 
     // bookings
-    app.post('/bookings', async(req, res) => {
+    app.post('/bookings', async (req, res) => {
       const booking = req.body;
       // console.log(booking);
       const result = await bookingCollection.insertOne(booking);
@@ -94,9 +149,9 @@ run().catch(console.dir);
 
 
 app.get('/', (req, res) => {
-    console.log("Doctor is running");
+  console.log("Doctor is running");
 })
 
 app.listen(port, () => {
-    console.log(`Doctor server is running on Port ${port}`);
+  console.log(`Doctor server is running on Port ${port}`);
 })
